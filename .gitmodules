@@ -1,0 +1,6 @@
+[submodule "VGM2GBSFX"]
+	path = VGM2GBSFX
+	url = https://github.com/untoxa/VGM2GBSFX.git
+[submodule "binjgb"]
+	path = binjgb
+	url = https://github.com/binji/binjgb.git
