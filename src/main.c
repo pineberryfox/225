@@ -4,46 +4,42 @@
 #include "sfxplayer.h"
 
 #include <gbdk/gbdecompress.h>
-#include <gb/gb.h>
+#include <gbdk/platform.h>
 #include <rand.h>
 
-enum {
-	FACE_RIGHT = 0,
-	FACE_UP,
-	FACE_LEFT,
-	FACE_DOWN,
-};
+#define BOARD_XOFF (DEVICE_SCREEN_WIDTH/2 - 8)
+#define BOARD_YOFF (DEVICE_SCREEN_HEIGHT/2 - 8)
+
+#if defined(GAMEBOY)
+#define DXOFF 8
+#define DYOFF 16
+#elif defined(MASTERSYSTEM)
+#define DXOFF 0
+#define DYOFF 0
+#elif defined(GAMEGEAR)
+#define DXOFF 48
+#define DYOFF 23
+#else
+#error "unknown port"
+#endif
+
 extern unsigned char const cm_tiles[];
 static signed char const xoff[] = {24, 12,  0, 12};
 static signed char const yoff[] = {12,  0, 12, 24};
 static signed char const shake_xoff[] = {0, 1, 0, -1, 0,  1, 0, -1};
 static signed char const shake_yoff[] = {0, 0, 0,  0, 1, -1, 0, -1};
 
-static char tbuf[32];
-static char board[16];
-static char boards[15][16];
-static char cboard;
-static char is_big;
+static unsigned char tbuf[32];
 static unsigned char last_btn;
-static char player_face;
-static char player_x;
-static char player_y;
 static char shake_duration;
-static char solved;
-static char rand_initted;
+static unsigned char rand_initted;
 
-static char check_solved(void);
-static char set_cboard(void);
-static char try_flip(char *);
 static void clear_screen(void);
 static void do_logo(void);
 static void do_title(void);
 static void do_end(void);
-static void draw_empty_board(int);
 static void draw_small_board(int);
 static void draw_player(void);
-static void find_hole(char const *);
-static void initialize(void);
 static void main_update(void);
 static void setup_system(void);
 static unsigned char get_keys(void);
@@ -52,14 +48,16 @@ static unsigned char
 get_keys(void)
 {
 	unsigned char keys = joypad();
+#if defined(GAMEBOY)
 	if (!((~keys) & (J_A | J_B | J_START | J_SELECT))) reset();
+#endif
 	return keys;
 }
 
 int
 main(void)
 {
-	char i;
+	unsigned char i;
 	setup_system();
 	do_logo();
 	while (1)
@@ -67,10 +65,11 @@ main(void)
 		do_title();
 		display_off();
 		clear_screen();
-		initialize();
-		for (i = 0; i < 16; ++i)
+		initialize_boards();
+		shake_duration = 0;
+		for (i = 16; i; --i)
 		{
-			draw_small_board(i);
+			draw_small_board(i-1);
 		}
 		move_bkg(0,0);
 		draw_player();
@@ -86,66 +85,71 @@ main(void)
 	}
 }
 
-static char
-check_solved(void)
-{
-	char i;
-	char j;
-	for (i = 15; i; --i)
-	{
-		if (board[i] != ((i+1)&0x0F)) return 0;
-	}
-	for (i = 0; i < 15; ++i)
-	{
-		for (j = 15; j; --j)
-		{
-			if (boards[i][j] != ((j+1)&0x0F)) return 0;
-		}
-	}
-	return 1;
-}
-
 static void
 main_update(void)
 {
 	unsigned char keys = get_keys();
 	unsigned char pressed = keys & ~last_btn;
-	unsigned char x;
-	if (pressed & J_RIGHT) player_face = FACE_RIGHT;
-	if (pressed & J_UP)    player_face = FACE_UP;
-	if (pressed & J_LEFT)  player_face = FACE_LEFT;
-	if (pressed & J_DOWN)  player_face = FACE_DOWN;
+	unsigned char x = 0;
+	if (pressed & J_RIGHT) { x = 1; player_face = FACE_RIGHT; }
+	if (pressed & J_UP)    { x = 1; player_face = FACE_UP; }
+	if (pressed & J_LEFT)  { x = 1; player_face = FACE_LEFT; }
+	if (pressed & J_DOWN)  { x = 1; player_face = FACE_DOWN; }
 	if (pressed & J_B)
 	{
-		if (is_big && set_cboard())
+		if (is_big)
 		{
-			find_hole(boards[board[cboard] - 1]);
-			is_big = 0;
+			if (set_cboard())
+			{
+				find_hole(boards[board[cboard] - 1]);
+				is_big = 0;
+			}
+			else
+			{
+				sfx_set_sample(0, sfx00);
+				shake_duration = 2;
+			}
 		}
-		else if (!is_big)
+		else
 		{
 			find_hole(board);
 			is_big = 1;
 		}
 	}
-	if (pressed & J_A)
+	if ((pressed & J_A) || (x && !is_big))
 	{
 		x = (player_y<<2) + player_x;
-		if (is_big && set_cboard())
+		if (is_big)
 		{
-			board[x] = board[cboard];
-			board[cboard] = 0;
-			mksolvable(boards[board[x] - 1]);
-			draw_small_board(cboard);
-			draw_small_board(x);
-			find_hole(board);
-			shake_duration = 4;
-			sfx_set_sample(0, sfx02);
+			if (set_cboard())
+			{
+				board[x] = board[cboard];
+				board[cboard] = 0;
+				mksolvable(boards[board[x] - 1]);
+				draw_small_board(cboard);
+				draw_small_board(x);
+				find_hole(board);
+				shake_duration = 4;
+				sfx_set_sample(0, sfx02);
+			}
+			else
+			{
+				sfx_set_sample(0, sfx00);
+				shake_duration = 2;
+			}
 		}
-		else if (!is_big)
+		else
 		{
-			try_flip(boards[board[cboard] - 1]);
-			draw_small_board(cboard);
+			if (try_flip(boards[board[cboard] - 1]))
+			{
+				sfx_set_sample(0, sfx03);
+				draw_small_board(cboard);
+			}
+			else
+			{
+				sfx_set_sample(0, sfx00);
+				shake_duration = 2;
+			}
 		}
 	}
 	move_bkg(shake_xoff[shake_duration],
@@ -153,73 +157,6 @@ main_update(void)
 	shake_duration -= !!(shake_duration);
 	draw_player();
 	last_btn = keys;
-}
-
-static char
-set_cboard(void)
-{
-	char ok = 1;
-	if (player_face == FACE_RIGHT && player_x == 3) ok = 0;
-	if (player_face == FACE_UP    && player_y == 0) ok = 0;
-	if (player_face == FACE_LEFT  && player_x == 0) ok = 0;
-	if (player_face == FACE_DOWN  && player_y == 3) ok = 0;
-	if (!ok)
-	{
-		sfx_set_sample(0, sfx00);
-		shake_duration = 2;
-		return 0;
-	}
-	cboard = (((player_y
-	            - (player_face == FACE_UP)
-	            + (player_face == FACE_DOWN))<<2)
-	          + (player_x
-	             - (player_face == FACE_LEFT)
-	             + (player_face == FACE_RIGHT)));
-	return 1;
-}
-
-static char
-try_flip(char * b)
-{
-	char x;
-	char y;
-	char ok = 1;
-	x = (player_y<<2) + player_x;
-	if (player_face == FACE_RIGHT && player_x == 3) ok = 0;
-	if (player_face == FACE_UP    && player_y == 0) ok = 0;
-	if (player_face == FACE_LEFT  && player_x == 0) ok = 0;
-	if (player_face == FACE_DOWN  && player_y == 3) ok = 0;
-	if (!ok)
-	{
-		sfx_set_sample(0, sfx00);
-		shake_duration = 2;
-		return 0;
-	}
-	y = (((player_y
-	       - (player_face == FACE_UP)
-	       + (player_face == FACE_DOWN))<<2)
-	     + (player_x
-	        - (player_face == FACE_LEFT)
-	        + (player_face == FACE_RIGHT)));
-	b[x] = b[y];
-	b[y] = 0;
-	player_y = y>>2;
-	player_x = y&0x03;
-	sfx_set_sample(0, sfx03);
-	return 1;
-}
-
-static void
-find_hole(char const * b)
-{
-	char i;
-	for (i = 0; i < 16; ++i)
-	{
-		if (b[i]) continue;
-		player_x = i & 0x03;
-		player_y = i >> 2;
-		break;
-	}
 }
 
 static void
@@ -231,42 +168,27 @@ update_sound(void)
 static void
 setup_system(void)
 {
+	unsigned char buf[4096];
 	display_off();
+	SPRITES_8x8;
 	add_VBL(update_sound);
 	sfx_sound_init();
 	clear_screen();
-	gb_decompress_sprite_data(0, cm_tiles);
+#if defined(GAMEBOY)
+	gb_decompress_bkg_data(0, cm_tiles);
+#else
+	gb_decompress(cm_tiles, buf);
+	set_bkg_2bpp_data(0, 256, buf);
+	set_sprite_2bpp_data(0, 128, buf + 2048);
+#endif
 }
 
 static void
 clear_screen(void)
 {
 	unsigned char i;
-	unsigned char j;
-	for (i = 0; i < 32; ++i)
-	{
-		for (j = 0; j < 32; ++j)
-		{
-			set_bkg_tile_xy(i, j, 0);
-		}
-	}
-}
-
-static void
-initialize(void)
-{
-	char i;
-	mksolvable(board);
-	for (i = 15; i; --i)
-	{
-		mksolvable(boards[i-1]);
-	}
-	find_hole(board);
-	is_big = 1;
-	player_face = FACE_RIGHT;
-	cboard = (player_y<<2)+player_x+1;
-	shake_duration = 0;
-	solved = 0;
+	for (i = 0; i < 4; ++i) move_sprite(i, 0, 0xF0U);
+	fill_rect(0, 0, 32, 32, 0);
 }
 
 static void
@@ -274,15 +196,20 @@ draw_player(void)
 {
 	unsigned char pxb;
 	unsigned char pyb;
-	set_sprite_tile(0, player_face);
-	set_sprite_tile(1, 0x10);
-	set_sprite_tile(2, 0x11);
-	set_sprite_tile(3, 0x20);
-	set_sprite_tile(4, 0x21);
+#if defined(GAMEBOY)
+#define PBASE 0x80U
+#elif defined(MASTERSYSTEM) || defined(GAMEGEAR)
+#define PBASE 0x00U
+#endif
+	set_sprite_tile(0, player_face | 0x50U | PBASE);
+	set_sprite_tile(1, 0x00 | PBASE);
+	set_sprite_tile(2, 0x20 | PBASE);
+	set_sprite_tile(3, 0x10 | PBASE);
+	set_sprite_tile(4, 0x30 | PBASE);
 	if (is_big)
 	{
-		pxb = (player_x<<5) + 24;
-		pyb = (player_y<<5) + 24;
+		pxb = (player_x<<5) + (BOARD_XOFF<<3)+DXOFF;
+		pyb = (player_y<<5) + (BOARD_YOFF<<3)+DYOFF;
 		move_sprite(1, pxb +  8, pyb + 8);
 		move_sprite(2, pxb + 16, pyb + 8);
 		move_sprite(3, pxb +  8, pyb + 16);
@@ -293,8 +220,8 @@ draw_player(void)
 	}
 	else
 	{
-		pxb = ((cboard&3)<<5) + 24;
-		pyb = ((cboard>>2)<<5) + 24;
+		pxb = ((cboard&3)<<5) + (BOARD_XOFF<<3)+DXOFF;
+		pyb = ((cboard>>2)<<5) + (BOARD_YOFF<<3)+DYOFF;
 		pxb += player_x<<3;
 		pyb += player_y<<3;
 		move_sprite(0, pxb, pyb);
@@ -302,23 +229,17 @@ draw_player(void)
 }
 
 static void
-draw_empty_board(int n)
-{
-	char i;
-	for (i = 0; i < 16; ++i)
-	{
-		tbuf[i] = 0;
-	}
-	set_bkg_tiles(4*(n&3) + 2, 4*(n>>2) + 1, 4, 4, tbuf);
-}
-
-static void
 draw_small_board(int n)
 {
-	char const * b;
-	char x = board[n];
-	char i;
-	if (!x) { draw_empty_board(n); return; }
+	unsigned char const * b;
+	unsigned char x = board[n];
+	unsigned char i;
+	if (!x) {
+		fill_rect(4*(n&3) + BOARD_XOFF,
+		          4*(n>>2) + BOARD_YOFF,
+		          4, 4, 0);
+		return;
+	}
 	b = boards[x - 1];
 	for (i = 0; i < 16; ++i)
 	{
@@ -344,15 +265,17 @@ draw_small_board(int n)
 			break;
 		}
 	}
-	set_bkg_tiles(4*(n&3) + 2, 4*(n>>2) + 1, 4, 4, tbuf);
+	set_bkg_tiles(4*(n&3) + BOARD_XOFF,
+	              4*(n>>2) + BOARD_YOFF,
+	              4, 4, tbuf);
 }
 
 static void
 do_logo(void)
 {
-	char i;
-	char j;
-	char x = 0;
+	unsigned char i;
+	unsigned char j;
+	unsigned char x = 0;
 	for (i = 0; i < 4; ++i)
 	{
 		for (j = 0; j < 6; ++j)
@@ -364,13 +287,30 @@ do_logo(void)
 	SHOW_BKG;
 	HIDE_SPRITES;
 	DISPLAY_ON;
-	set_bkg_tiles(7,6,6,4,tbuf);
+#if defined(MASTERSYSTEM)
+	set_palette_entry(0, 0, 0x24U);
+	set_palette_entry(0, 1, 0x18U);
+	set_palette_entry(0, 2, 0x27U);
+	set_palette_entry(0, 3, 0x3FU);
+#elif defined(GAMEGEAR)
+	set_palette_entry(0, 0, 0x840U);
+	set_palette_entry(0, 1, 0x480U);
+	set_palette_entry(0, 2, 0x84FU);
+	set_palette_entry(0, 3, 0xFFFU);
+#endif
+	set_bkg_tiles(DEVICE_SCREEN_WIDTH/2 - 3,
+	              DEVICE_SCREEN_HEIGHT/2 - 3,
+	              6,4,tbuf);
 	for (i = 12; i; --i)
 	{
 		tbuf[i] = " PINEBERRYF0X"[i] + 0x20;
 	}
-	set_bkg_tiles(5,11,9,1,tbuf+1);
-	set_bkg_tiles(8,12,3,1,tbuf+10);
+	set_bkg_tiles(DEVICE_SCREEN_WIDTH/2 - 5,
+	              DEVICE_SCREEN_HEIGHT/2 + 2,
+	              9,1,tbuf+1);
+	set_bkg_tiles(DEVICE_SCREEN_WIDTH/2 - 2,
+	              DEVICE_SCREEN_HEIGHT/2 + 3,
+	              3,1,tbuf+10);
 	for (i = 120; i; --i) wait_vbl_done();
 }
 
@@ -378,7 +318,7 @@ static void
 do_title(void)
 {
 	unsigned char keys = get_keys();
-	char i;
+	unsigned char i;
 	display_off();
 	clear_screen();
 	/* display stuff */
@@ -386,30 +326,57 @@ do_title(void)
 	{
 		tbuf[i] = 0xC0 | ((i+1)&0x0F);
 	}
-	set_bkg_tiles(8,12,4,4,tbuf);
+	set_bkg_tiles(DEVICE_SCREEN_WIDTH/2 - 2,
+	              DEVICE_SCREEN_HEIGHT/2 + 3,
+	              4,4,tbuf);
 	for (i = 0; i < 32; ++i)
 	{
 		tbuf[i] = ((i>>3)<<4) | (i&0x07);
 	}
-	set_bkg_tiles(6,4,8,4,tbuf);
+	set_bkg_tiles(DEVICE_SCREEN_WIDTH/2 - 4,
+	              DEVICE_SCREEN_HEIGHT/2 - 5,
+	              8,4,tbuf);
+	set_bkg_tile_xy(DEVICE_SCREEN_WIDTH-2,
+	                DEVICE_SCREEN_HEIGHT-1,0x38);
+	set_bkg_tile_xy(DEVICE_SCREEN_WIDTH-1,
+	                DEVICE_SCREEN_HEIGHT-1,0x39);
+#if defined(MASTERSYSTEM)
+	set_palette_entry(0, 0, 0x00U);
+	set_palette_entry(0, 1, 0x04U);
+	set_palette_entry(0, 2, 0x19U);
+	set_palette_entry(0, 3, 0x2FU);
+	set_palette_entry(1, 3, 0x3FU);
+#elif defined(GAMEGEAR)
+	set_palette_entry(0, 0, 0x000U);
+	set_palette_entry(0, 1, 0x040U);
+	set_palette_entry(0, 2, 0x484U);
+	set_palette_entry(0, 3, 0x8FFU);
+	set_palette_entry(1, 3, 0xFFFU)
+#endif
 	/* done making screen */
 	HIDE_SPRITES;
 	SHOW_BKG;
 	DISPLAY_ON;
+	i = 0;
 	while(!(keys & (~last_btn) & (J_A | J_B | J_START)))
 	{
 		last_btn = keys;
 		keys = get_keys();
 		if (rand_initted) wait_vbl_done();
+		++i;
 	}
 	last_btn = keys;
+#if defined(GAMEBOY)
 	if (!rand_initted) initrand(DIV_REG);
+#else
+	initrand(i);
+#endif
 }
 
 static void
 do_end(void)
 {
-	char i;
+	unsigned char i;
 	unsigned char keys = last_btn;
 	wait_vbl_done();
 	sfx_set_sample(0, sfx01);
@@ -417,8 +384,12 @@ do_end(void)
 	{
 		tbuf[i] = "C0NGRATULATI0NS"[i] + 0x20;
 	}
-	set_bkg_tiles(2, 0,15,1,tbuf);
-	set_bkg_tiles(3,17,15,1,tbuf);
+	set_bkg_tiles(DEVICE_SCREEN_WIDTH/2-8,
+	              DEVICE_SCREEN_HEIGHT/2-9,
+	              15,1,tbuf);
+	set_bkg_tiles(DEVICE_SCREEN_WIDTH/2-7,
+	              DEVICE_SCREEN_HEIGHT/2+8,
+	              15,1,tbuf);
 	for (char i = 0; i < 30; ++i)
 	{
 		wait_vbl_done();
