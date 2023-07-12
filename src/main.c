@@ -9,19 +9,8 @@
 
 #define BOARD_XOFF (DEVICE_SCREEN_WIDTH/2 - 8)
 #define BOARD_YOFF (DEVICE_SCREEN_HEIGHT/2 - 8)
-
-#if defined(GAMEBOY)
-#define DXOFF 8
-#define DYOFF 16
-#elif defined(MASTERSYSTEM)
-#define DXOFF 0
-#define DYOFF 0
-#elif defined(GAMEGEAR)
-#define DXOFF 48
-#define DYOFF 23
-#else
-#error "unknown port"
-#endif
+#define DXOFF DEVICE_SPRITE_PX_OFFSET_X
+#define DYOFF DEVICE_SPRITE_PX_OFFSET_Y
 
 extern unsigned char const cm_tiles[];
 static signed char const xoff[] = {24, 12,  0, 12};
