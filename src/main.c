@@ -1,11 +1,14 @@
-#include "boardstate.h"
-#include "sfx.h"
-
-#include "sfxplayer.h"
-
 #include <gbdk/gbdecompress.h>
 #include <gbdk/platform.h>
 #include <rand.h>
+
+#include "boardstate.h"
+#if defined(GAMEBOY)
+#include "sfx.h"
+#endif
+
+#include "sfxplayer.h"
+
 
 #define BOARD_XOFF (DEVICE_SCREEN_WIDTH/2 - 8)
 #define BOARD_YOFF (DEVICE_SCREEN_HEIGHT/2 - 8)
@@ -157,7 +160,9 @@ update_sound(void)
 static void
 setup_system(void)
 {
+#if !defined(GAMEBOY)
 	unsigned char buf[4096];
+#endif
 	display_off();
 	SPRITES_8x8;
 	add_VBL(update_sound);
