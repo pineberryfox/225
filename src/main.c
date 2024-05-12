@@ -345,7 +345,7 @@ do_title(void)
 	set_palette_entry(0, 1, 0x040U);
 	set_palette_entry(0, 2, 0x484U);
 	set_palette_entry(0, 3, 0x8FFU);
-	set_palette_entry(1, 3, 0xFFFU)
+	set_palette_entry(1, 3, 0xFFFU);
 #endif
 	/* done making screen */
 	HIDE_SPRITES;
